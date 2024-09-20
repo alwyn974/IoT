@@ -1,115 +1,121 @@
-/*********
-  Rui Santos
-  Complete instructions at https://RandomNerdTutorials.com/esp8266-web-server-gauges/
+/*
+  ESP8266 mDNS responder sample
 
-  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.
-  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-*********/
+  This is an example of an HTTP server that is accessible
+  via http://esp8266.local URL thanks to mDNS responder.
 
-#include <Arduino.h>
+  Instructions:
+  - Update WiFi SSID and password as necessary.
+  - Flash the sketch to the ESP8266 board
+  - Install host software:
+    - For Linux, install Avahi (http://avahi.org/).
+    - For Windows, install Bonjour (http://www.apple.com/support/bonjour/).
+    - For Mac OSX and iOS support is built in through Bonjour already.
+  - Point your browser to http://esp8266.local, you should see a response.
+
+*/
+
+
 #include <ESP8266WiFi.h>
-#include <ESPAsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include "LittleFS.h"
-#include <Arduino_JSON.h>
-#include <Adafruit_BME280.h>
-#include <Adafruit_Sensor.h>
+#include <ESP8266mDNS.h>
+#include <WiFiClient.h>
+#include <Wire.h>
+#include <SPI.h>
 
-// Replace with your network credentials
-const char* ssid = "";
-const char* password = "";
+#ifndef STASSID
+    #define STASSID "FW"
+    #define STAPSK "fazanwolf974fw"
+#endif
 
-// Create AsyncWebServer object on port 80
-AsyncWebServer server(80);
+const char* ssid = STASSID;
+const char* password = STAPSK;
 
-// Create an Event Source on /events
-AsyncEventSource events("/events");
+// TCP server at port 80 will respond to HTTP requests
+WiFiServer server(80);
 
-// Json Variable to Hold Sensor Readings
-JSONVar readings;
+void setup(void) {
+    Serial.begin(115200);
 
-// Timer variables
-unsigned long lastTime = 0;
-unsigned long timerDelay = 30000;
-
-// Create a sensor object
-Adafruit_BME280 bme;         // BME280 connect to ESP32 I2C (GPIO 21 = SDA, GPIO 22 = SCL)
-
-// Init BME280
-void initBME(){
-    // if (!bme.begin(0x76)) {
-    //   Serial.println("Could not find a valid BME280 sensor, check wiring!");
-    //   while (1);
-    // }
-}
-
-// Get Sensor Readings and return JSON object
-String getSensorReadings(){
-    // readings["temperature"] = String(bme.readTemperature());
-    // readings["humidity"] =  String(bme.readHumidity());
-    String jsonString = JSON.stringify(readings);
-    return jsonString;
-}
-
-// Initialize LittleFS
-void initFS() {
-    if (!LittleFS.begin()) {
-        Serial.println("An error has occurred while mounting LittleFS");
-    }
-    Serial.println("LittleFS mounted successfully");
-}
-
-// Initialize WiFi
-void initWiFi() {
+    // Connect to WiFi network
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
-    Serial.print("Connecting to WiFi ..");
+    Serial.println("");
+
+    // Wait for connection
     while (WiFi.status() != WL_CONNECTED) {
-        Serial.print('.');
-        delay(1000);
+        delay(500);
+        Serial.print(".");
     }
+    Serial.println("");
+    Serial.print("Connected to ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-}
 
-void setup() {
-    Serial.begin(115200);
-    initBME();
-    initWiFi();
-    initFS();
-
-    // Web Server Root URL
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send(LittleFS, "/index.html", "text/html");
-    });
-
-    server.serveStatic("/", LittleFS, "/");
-
-    // Request for the latest sensor readings
-    server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request){
-        // String json = getSensorReadings();
-        // request->send(200, "application/json", json);
-        // json = String();
-    });
-
-    events.onConnect([](AsyncEventSourceClient *client){
-        if(client->lastId()){
-            Serial.printf("Client reconnected! Last message ID that it got is: %u\n", client->lastId());
-        }
-        // send event with message "hello!", id current millis
-        // and set reconnect delay to 1 second
-        client->send("hello!", NULL, millis(), 10000);
-    });
-    server.addHandler(&events);
-
-    // Start server
-    server.begin();
-}
-
-void loop() {
-    if ((millis() - lastTime) > timerDelay) {
-        // Send Events to the client with the Sensor Readings Every 30 seconds
-        events.send("ping",NULL,millis());
-        // events.send(getSensorReadings().c_str(),"new_readings" ,millis());
-        lastTime = millis();
+    // Set up mDNS responder:
+    // - first argument is the domain name, in this example
+    //   the fully-qualified domain name is "esp8266.local"
+    // - second argument is the IP address to advertise
+    //   we send our IP address on the WiFi network
+    if (!MDNS.begin("esp8266")) {
+        Serial.println("Error setting up MDNS responder!");
+        while (1) { delay(1000); }
     }
+    Serial.println("mDNS responder started");
+
+    // Start TCP (HTTP) server
+    server.begin();
+    Serial.println("TCP server started");
+
+    // Add service to MDNS-SD
+    MDNS.addService("http", "tcp", 80);
+}
+
+void loop(void) {
+
+    MDNS.update();
+
+    // Check if a client has connected
+    WiFiClient client = server.accept();
+    if (!client) { return; }
+    Serial.println("");
+    Serial.println("New client");
+
+    // Wait for data from client to become available
+    while (client.connected() && !client.available()) { delay(1); }
+
+    // Read the first line of HTTP request
+    String req = client.readStringUntil('\r');
+
+    // First line of HTTP request looks like "GET /path HTTP/1.1"
+    // Retrieve the "/path" part by finding the spaces
+    int addr_start = req.indexOf(' ');
+    int addr_end = req.indexOf(' ', addr_start + 1);
+    if (addr_start == -1 || addr_end == -1) {
+        Serial.print("Invalid request: ");
+        Serial.println(req);
+        return;
+    }
+    req = req.substring(addr_start + 1, addr_end);
+    Serial.print("Request: ");
+    Serial.println(req);
+    client.flush();
+
+    String s;
+    if (req == "/") {
+        IPAddress ip = WiFi.localIP();
+        String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+        s = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>Hello from ESP8266 at ";
+        s += ipStr;
+        s += "</html>\r\n\r\n";
+        s += "Unique ID: ";
+        s += EspClass::getChipId();
+        Serial.println("Sending 200");
+    } else {
+        s = "HTTP/1.1 404 Not Found\r\n\r\n";
+        Serial.println("Sending 404");
+    }
+    client.print(s);
+
+    Serial.println("Done with client");
 }

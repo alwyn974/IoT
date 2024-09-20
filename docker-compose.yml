@@ -1,0 +1,29 @@
+version: "3.7"
+services:
+  mqtt5:
+    container_name: mqtt5
+    image: eclipse-mosquitto:2.0.18@sha256:d12c8f80dfc65b768bb9acecc7ef182b976f71fb681640b66358e5e0cf94e9e9 # mqtt broker
+    restart: unless-stopped
+    ports:
+      - "1883:1883" #default mqtt port
+      - "9999:9001" #default mqtt port for websockets
+    volumes:
+      - ./config:/mosquitto/config:rw
+      - ./data:/mosquitto/da.ta:rw
+      - ./log:/mosquitto/log:rw
+
+  mqttx:
+    container_name: mqttx
+    image: emqx/mqttx-web:v1.10.1@sha256:fc86dbabd4adacc5b6984d5c36458127cbc7af5dc17ad527367eec22da3ab535
+    restart: unless-stopped
+    ports:
+#      - "1883:1883" #default mqtt port
+      - "8080:80" #default mqtt port for websockets
+    volumes:
+      - ./emqx/data:/opt/emqx/data:rw
+      - ./emqx/log:/opt/emqx/log:rw
+      - ./emqx/etc:/opt/emqx/etc:rw
+
+volumes:
+  data:
+  log:

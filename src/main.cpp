@@ -13,6 +13,7 @@
 #include "LittleFS.h"
 #include <Arduino_JSON.h>
 #include <Adafruit_BME280.h>
+#include <Adafruit_Sensor.h>
 
 // Replace with your network credentials
 const char* ssid = "";
@@ -21,12 +22,34 @@ const char* password = "";
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 
+// Create an Event Source on /events
+AsyncEventSource events("/events");
+
+// Json Variable to Hold Sensor Readings
+JSONVar readings;
+
 // Timer variables
 unsigned long lastTime = 0;
 unsigned long timerDelay = 30000;
 
 // Create a sensor object
 Adafruit_BME280 bme;         // BME280 connect to ESP32 I2C (GPIO 21 = SDA, GPIO 22 = SCL)
+
+// Init BME280
+void initBME(){
+    // if (!bme.begin(0x76)) {
+    //   Serial.println("Could not find a valid BME280 sensor, check wiring!");
+    //   while (1);
+    // }
+}
+
+// Get Sensor Readings and return JSON object
+String getSensorReadings(){
+    // readings["temperature"] = String(bme.readTemperature());
+    // readings["humidity"] =  String(bme.readHumidity());
+    String jsonString = JSON.stringify(readings);
+    return jsonString;
+}
 
 // Initialize LittleFS
 void initFS() {
@@ -50,6 +73,7 @@ void initWiFi() {
 
 void setup() {
     Serial.begin(115200);
+    initBME();
     initWiFi();
     initFS();
 
@@ -60,6 +84,23 @@ void setup() {
 
     server.serveStatic("/", LittleFS, "/");
 
+    // Request for the latest sensor readings
+    server.on("/readings", HTTP_GET, [](AsyncWebServerRequest *request){
+        // String json = getSensorReadings();
+        // request->send(200, "application/json", json);
+        // json = String();
+    });
+
+    events.onConnect([](AsyncEventSourceClient *client){
+        if(client->lastId()){
+            Serial.printf("Client reconnected! Last message ID that it got is: %u\n", client->lastId());
+        }
+        // send event with message "hello!", id current millis
+        // and set reconnect delay to 1 second
+        client->send("hello!", NULL, millis(), 10000);
+    });
+    server.addHandler(&events);
+
     // Start server
     server.begin();
 }
@@ -67,6 +108,8 @@ void setup() {
 void loop() {
     if ((millis() - lastTime) > timerDelay) {
         // Send Events to the client with the Sensor Readings Every 30 seconds
+        events.send("ping",NULL,millis());
+        // events.send(getSensorReadings().c_str(),"new_readings" ,millis());
         lastTime = millis();
     }
 }

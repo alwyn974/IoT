@@ -1,106 +1,72 @@
-/*
-    This sketch demonstrates how to set up a simple HTTP-like server.
-    The server will set a GPIO pin depending on the request
-      http://server_ip/gpio/0 will set the GPIO2 low,
-      http://server_ip/gpio/1 will set the GPIO2 high
-    server_ip is the IP address of the ESP8266 module, will be
-    printed to Serial when the module is connected.
-*/
+/*********
+  Rui Santos
+  Complete instructions at https://RandomNerdTutorials.com/esp8266-web-server-gauges/
 
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files.
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+*********/
+
+#include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "LittleFS.h"
+#include <Arduino_JSON.h>
+#include <Adafruit_BME280.h>
 
-#ifndef STASSID
-    #define STASSID ""
-    #define STAPSK ""
-#endif
+// Replace with your network credentials
+const char* ssid = "";
+const char* password = "";
 
-const char* ssid = STASSID;
-const char* password = STAPSK;
-const int ledPin = D3;
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
 
-// Create an instance of the server
-// specify the port to listen on as an argument
-WiFiServer server(80);
+// Timer variables
+unsigned long lastTime = 0;
+unsigned long timerDelay = 30000;
 
-void setup() {
-    Serial.begin(115200);
+// Create a sensor object
+Adafruit_BME280 bme;         // BME280 connect to ESP32 I2C (GPIO 21 = SDA, GPIO 22 = SCL)
 
-    // prepare LED
-    pinMode(ledPin, OUTPUT);
-    digitalWrite(ledPin, 0);
+// Initialize LittleFS
+void initFS() {
+    if (!LittleFS.begin()) {
+        Serial.println("An error has occurred while mounting LittleFS");
+    }
+    Serial.println("LittleFS mounted successfully");
+}
 
-    // Connect to WiFi network
-    Serial.println();
-    Serial.println();
-    Serial.print(F("Connecting to "));
-    Serial.println(ssid);
-
+// Initialize WiFi
+void initWiFi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
-
+    Serial.print("Connecting to WiFi ..");
     while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(F("."));
+        Serial.print('.');
+        delay(1000);
     }
-    Serial.println();
-    Serial.println(F("WiFi connected"));
-
-    // Start the server
-    server.begin();
-    Serial.println(F("Server started"));
-
-    // Print the IP address
     Serial.println(WiFi.localIP());
 }
 
+void setup() {
+    Serial.begin(115200);
+    initWiFi();
+    initFS();
+
+    // Web Server Root URL
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(LittleFS, "/index.html", "text/html");
+    });
+
+    server.serveStatic("/", LittleFS, "/");
+
+    // Start server
+    server.begin();
+}
+
 void loop() {
-    // Check if a client has connected
-    WiFiClient client = server.accept();
-    if (!client) { return; }
-    Serial.println(F("new client"));
-
-    client.setTimeout(5000);  // default is 1000
-
-    // Read the first line of the request
-    String req = client.readStringUntil('\r');
-    Serial.println(F("request: "));
-    Serial.println(req);
-
-    // Match the request
-    int val;
-    if (req.indexOf(F("/gpio/0")) != -1) {
-        val = 0;
-    } else if (req.indexOf(F("/gpio/1")) != -1) {
-        val = 1;
-    } else {
-        Serial.println(F("invalid request"));
-        val = digitalRead(ledPin);
+    if ((millis() - lastTime) > timerDelay) {
+        // Send Events to the client with the Sensor Readings Every 30 seconds
+        lastTime = millis();
     }
-
-    // Set LED according to the request
-    Serial.println(val);
-    digitalWrite(ledPin, val);
-
-    // read/ignore the rest of the request
-    // do not client.flush(): it is for output only, see below
-    while (client.available()) {
-        // byte by byte is not very efficient
-        client.read();
-    }
-
-    // Send the response to the client
-    // it is OK for multiple small client.print/write,
-    // because nagle algorithm will group them into one single packet
-    client.print(F("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<!DOCTYPE HTML>\r\n<html>\r\nGPIO is now "));
-    client.print((val) ? F("high") : F("low"));
-    client.print(F("<br><br>Click <a href='http://"));
-    client.print(WiFi.localIP());
-    client.print(F("/gpio/1'>here</a> to switch LED GPIO on, or <a href='http://"));
-    client.print(WiFi.localIP());
-    client.print(F("/gpio/0'>here</a> to switch LED GPIO off.</html>"));
-
-    // The client will actually be *flushed* then disconnected
-    // when the function returns and 'client' object is destroyed (out-of-scope)
-    // flush = ensure written data are received by the other side
-    Serial.println(F("Disconnecting from client"));
 }
